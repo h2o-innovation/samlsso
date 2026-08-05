@@ -1,5 +1,7 @@
 
 **V1.3.2**
+- Fix: SAML request and inactivity timeouts no longer fire on state rows with empty or invalid `loginTime`/`lastClickTime` values. `strtotime('')` returned `false`, which previously made `time() - 0` exceed any configured timeout, instantly expiring states and producing spurious "SAML authentication request timed out" errors on re-authentication.
+- Fix: The ACS request timeout now measures the age of the current SAML AuthNRequest instead of the age of the state row. A new `LoginState::setRequestStart()` refreshes `loginTime` every time an AuthNRequest is issued, so re-authenticating after an idle period on a long-lived session no longer fails on the first attempt.
 - Fixed issue https://github.com/DonutsNL/samlsso/issues/145 where custom GLPI_MARKETPLACE_DIR paths caused 404/installation regressions - suggested by @albertogalisteo.
 - Fixed issue https://github.com/DonutsNL/samlsso/issues/141 with JIT rules test route opening missing plugin path - suggested by @KawanCostaNs.
 - Fixed issue https://github.com/DonutsNL/samlsso/pull/144 to support GeneralizedTime X.509 certificate dates with validity dates beyond 2049 by @enricomv.

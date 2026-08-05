@@ -333,6 +333,193 @@ namespace GlpiPlugin\Samlsso\Tests {
 
             echo "✅ LoginState: inactivity timeout transitions to TIMED_OUT and is not overwritten\n";
         }
+
+        /**
+         * Test that states with empty/invalid loginTime or lastClickTime are NOT
+         * incorrectly transitioned to PHASE_TIMED_OUT. strtotime('') returns false,
+         * which previously made time() - 0 exceed any timeout value, expiring states
+         * instantly and producing spurious 'SAML authentication request timed out'
+         * errors on re-authentication.
+         */
+        public function testLoginStateEmptyTimestampsDoNotTimeout(): void {
+            global $DB;
+            $db = new MockDB();
+            $DB = $db;
+
+            $table = LoginState::getTable();
+
+            // Empty timestamps as observed in production state rows
+            $db->setResponse($table, [
+                [
+                    LoginState::STATE_ID => 1,
+                    LoginState::IDP_ID => 2,
+                    LoginState::USER_NAME => 'test_user',
+                    LoginState::SESSION_ID => 'abcdef123456',
+                    LoginState::SESSION_NAME => 'sid',
+                    LoginState::GLPI_AUTHED => 0,
+                    LoginState::SAML_AUTHED => 0,
+                    LoginState::LOGIN_DATETIME => '',
+                    LoginState::LAST_ACTIVITY => '',
+                    LoginState::LOCATION => 'https://glpi.local/index.php',
+                    LoginState::ENFORCE_LOGOFF => 0,
+                    LoginState::SAML_REQUEST_ID => 'req_123',
+                    LoginState::SAML_RESPONSE_ID => '',
+                    LoginState::SAML_UNSOLICITED => 0,
+                    LoginState::LOGIN_FLOW_TRACE => serialize([]),
+                    LoginState::PHASE => LoginState::PHASE_SAML_ACS,
+                    LoginState::REDIRECT => '',
+                    LoginState::CLIENT_IP => '127.0.0.1',
+                    LoginState::CLIENT_COUNTRY => 'US',
+                ]
+            ]);
+
+            \GlpiPlugin\Samlsso\Config\MockConfigEntity::$mockFields[\GlpiPlugin\Samlsso\Config\MockConfigEntity::REQUEST_TIMEOUT] = 15;
+
+            $loginState = new LoginState('req_123');
+
+            if ($loginState->getPhase() !== LoginState::PHASE_SAML_ACS) {
+                throw new \Exception("Empty loginTime incorrectly triggered a request timeout. Expected PHASE_SAML_ACS (2), got: " . $loginState->getPhase());
+            }
+
+            // Also verify an empty lastClickTime does not trigger the inactivity
+            // timeout on an authenticated session.
+            $db->setResponse($table, [
+                [
+                    LoginState::STATE_ID => 2,
+                    LoginState::IDP_ID => 2,
+                    LoginState::USER_NAME => 'test_user',
+                    LoginState::SESSION_ID => session_id(),
+                    LoginState::SESSION_NAME => 'sid',
+                    LoginState::GLPI_AUTHED => 1,
+                    LoginState::SAML_AUTHED => 1,
+                    LoginState::LOGIN_DATETIME => '',
+                    LoginState::LAST_ACTIVITY => '',
+                    LoginState::LOCATION => 'https://glpi.local/index.php',
+                    LoginState::ENFORCE_LOGOFF => 0,
+                    LoginState::SAML_REQUEST_ID => '',
+                    LoginState::SAML_RESPONSE_ID => '',
+                    LoginState::SAML_UNSOLICITED => 0,
+                    LoginState::LOGIN_FLOW_TRACE => serialize([]),
+                    LoginState::PHASE => LoginState::PHASE_GLPI_AUTH,
+                    LoginState::REDIRECT => '',
+                    LoginState::CLIENT_IP => '127.0.0.1',
+                    LoginState::CLIENT_COUNTRY => 'US',
+                ]
+            ]);
+
+            \GlpiPlugin\Samlsso\Config\MockConfigEntity::$mockFields = [
+                \GlpiPlugin\Samlsso\Config\MockConfigEntity::INACTIVITY_TIMEOUT => 15
+            ];
+            $_SESSION[LoginState::SESSION_GLPI_NAME_ACCESSOR] = 'test_user';
+            $_SESSION[LoginState::SESSION_VALID_ID_ACCESSOR] = session_id();
+
+            $loginStateAuthed = new LoginState();
+
+            if ($loginStateAuthed->getPhase() !== LoginState::PHASE_GLPI_AUTH) {
+                throw new \Exception("Empty lastClickTime incorrectly triggered the inactivity timeout. Expected PHASE_GLPI_AUTH (4), got: " . $loginStateAuthed->getPhase());
+            }
+
+            // Clean up
+            unset($_SESSION[LoginState::SESSION_GLPI_NAME_ACCESSOR]);
+            unset($_SESSION[LoginState::SESSION_VALID_ID_ACCESSOR]);
+            \GlpiPlugin\Samlsso\Config\MockConfigEntity::$mockFields = [];
+
+            echo "✅ LoginState: empty timestamps do not trigger premature timeouts\n";
+        }
+
+        /**
+         * Test that setRequestStart() refreshes the loginTime reference so that
+         * re-authentication on a long-lived state row is not prematurely expired
+         * by the request timeout.
+         */
+        public function testLoginStateRequestStartRefreshesTimeout(): void {
+            global $DB;
+            $db = new MockDB();
+            $DB = $db;
+
+            $table = LoginState::getTable();
+            $oldTime = gmdate('Y-m-d H:i:s', time() - 3600); // 1 hour ago
+
+            // Existing session state row that is about to be re-authenticated
+            $db->setResponse($table, [
+                [
+                    LoginState::STATE_ID => 1,
+                    LoginState::IDP_ID => 2,
+                    LoginState::USER_NAME => 'test_user',
+                    LoginState::SESSION_ID => session_id(),
+                    LoginState::SESSION_NAME => 'sid',
+                    LoginState::GLPI_AUTHED => 0,
+                    LoginState::SAML_AUTHED => 0,
+                    LoginState::LOGIN_DATETIME => $oldTime,
+                    LoginState::LAST_ACTIVITY => $oldTime,
+                    LoginState::LOCATION => 'https://glpi.local/index.php',
+                    LoginState::ENFORCE_LOGOFF => 0,
+                    LoginState::SAML_REQUEST_ID => '',
+                    LoginState::SAML_RESPONSE_ID => '',
+                    LoginState::SAML_UNSOLICITED => 0,
+                    LoginState::LOGIN_FLOW_TRACE => serialize([]),
+                    LoginState::PHASE => LoginState::PHASE_INITIAL,
+                    LoginState::REDIRECT => '',
+                    LoginState::CLIENT_IP => '127.0.0.1',
+                    LoginState::CLIENT_COUNTRY => 'US',
+                ]
+            ]);
+
+            \GlpiPlugin\Samlsso\Config\MockConfigEntity::$mockFields[\GlpiPlugin\Samlsso\Config\MockConfigEntity::REQUEST_TIMEOUT] = 15;
+
+            // Load the existing (old) session state by PHP session id
+            $loginState = new LoginState();
+
+            // Issue a new SAML AuthNRequest -> refresh the request start time
+            if ($loginState->setRequestStart() !== true) {
+                throw new \Exception("setRequestStart() did not return true");
+            }
+
+            // Verify loginTime was refreshed to ~now
+            $refObj = new \ReflectionObject($loginState);
+            $refProp = $refObj->getProperty('state');
+            $refProp->setAccessible(true);
+            $state = $refProp->getValue($loginState);
+            $requestStart = strtotime($state[LoginState::LOGIN_DATETIME] ?? '');
+            if ($requestStart === false || (time() - $requestStart) > 120) {
+                throw new \Exception("setRequestStart() did not refresh loginTime. Got: " . var_export($state[LoginState::LOGIN_DATETIME] ?? null, true));
+            }
+
+            // Simulate the ACS reload reading the refreshed timestamp back from the DB
+            $db->setResponse($table, [
+                [
+                    LoginState::STATE_ID => 1,
+                    LoginState::IDP_ID => 2,
+                    LoginState::USER_NAME => 'test_user',
+                    LoginState::SESSION_ID => session_id(),
+                    LoginState::SESSION_NAME => 'sid',
+                    LoginState::GLPI_AUTHED => 0,
+                    LoginState::SAML_AUTHED => 0,
+                    LoginState::LOGIN_DATETIME => $state[LoginState::LOGIN_DATETIME],
+                    LoginState::LAST_ACTIVITY => $state[LoginState::LAST_ACTIVITY],
+                    LoginState::LOCATION => 'https://glpi.local/index.php',
+                    LoginState::ENFORCE_LOGOFF => 0,
+                    LoginState::SAML_REQUEST_ID => 'req_123',
+                    LoginState::SAML_RESPONSE_ID => '',
+                    LoginState::SAML_UNSOLICITED => 0,
+                    LoginState::LOGIN_FLOW_TRACE => serialize([]),
+                    LoginState::PHASE => LoginState::PHASE_SAML_ACS,
+                    LoginState::REDIRECT => '',
+                    LoginState::CLIENT_IP => '127.0.0.1',
+                    LoginState::CLIENT_COUNTRY => 'US',
+                ]
+            ]);
+
+            $loginStateAcs = new LoginState('req_123');
+
+            if ($loginStateAcs->getPhase() !== LoginState::PHASE_SAML_ACS) {
+                throw new \Exception("Re-authentication after setRequestStart() was incorrectly expired. Expected PHASE_SAML_ACS (2), got: " . $loginStateAcs->getPhase());
+            }
+
+            \GlpiPlugin\Samlsso\Config\MockConfigEntity::$mockFields = [];
+
+            echo "✅ LoginState: setRequestStart() refreshes timeout reference for re-auth\n";
+        }
     }
 }
 
@@ -345,6 +532,8 @@ namespace {
         $test->testLoginStateSessionExpiry();
         $test->testLoginStateLocationFallback();
         $test->testLoginStateInactivityTimeoutNoOverwrite();
+        $test->testLoginStateEmptyTimestampsDoNotTimeout();
+        $test->testLoginStateRequestStartRefreshesTimeout();
         $test = null;
     } catch (\Exception $e) {
         echo "\n❌ Test Failed: " . $e->getMessage() . "\n";

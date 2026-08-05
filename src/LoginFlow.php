@@ -512,6 +512,11 @@ class LoginFlow extends CommonDBTM
             if ($auth !== null) {
                 // Register the requestId in the database and $_SESSION var;
                 $this->state->setRequestId($auth->getLastRequestID());
+                // Refresh the request start time so the ACS request timeout measures
+                // the age of this AuthNRequest instead of the (potentially old) state
+                // row. Prevents spurious 'SAML authentication request timed out'
+                // errors when re-authenticating after an idle period.
+                $this->state->setRequestStart();
             }
 
             // Update the current phase in database. The state is verified by the Acs

@@ -230,7 +230,7 @@ class LoginState extends CommonDBTM
                     }
                 }
                 $loginTime = strtotime($this->state[LoginState::LOGIN_DATETIME]);
-                if (time() - $loginTime > ($timeoutMinutes * 60)) {
+                if ($loginTime !== false && time() - $loginTime > ($timeoutMinutes * 60)) {
                     $this->state[LoginState::PHASE] = LoginState::PHASE_TIMED_OUT;
                 }
             }
@@ -267,7 +267,7 @@ class LoginState extends CommonDBTM
                 }
                 if ($inactivityTimeout > 0) {
                     $lastActivityTime = strtotime($this->state[LoginState::LAST_ACTIVITY]);
-                    if (time() - $lastActivityTime > ($inactivityTimeout * 60)) {
+                    if ($lastActivityTime !== false && time() - $lastActivityTime > ($inactivityTimeout * 60)) {
                         $this->state[LoginState::PHASE] = LoginState::PHASE_TIMED_OUT;
                     }
                 }
@@ -701,6 +701,28 @@ class LoginState extends CommonDBTM
     public function getSamlRequestId(): string
     {
         return (!empty($this->state[LoginState::SAML_REQUEST_ID])) ? (string) $this->state[LoginState::SAML_REQUEST_ID] : '';
+    }
+
+    /**
+     * Registers the start time of the current SAML AuthNRequest in the state table.
+     *
+     * The loginTime field doubles as the reference point for the ACS request
+     * timeout. Refreshing it every time a new AuthNRequest is issued ensures
+     * the timeout measures the age of the current request instead of the age
+     * of the state row, which could otherwise be hours or days old when a user
+     * re-authenticates after an idle period.
+     *
+     * @return bool     true on success.
+     * @since           1.3.2
+     */
+    public function setRequestStart(): bool
+    {
+        if (isset($this->state[LoginState::STATE_ID])) {
+            $this->state[LoginState::LOGIN_DATETIME] = date('Y-m-d H:i:s');
+            return ($this->update($this->state)) ? true : false;
+        } else {
+            throw new LoginStateException('Tried to update request start of non existing state');
+        }
     }
 
     /**
@@ -1272,7 +1294,7 @@ class LoginState extends CommonDBTM
                 }
 
                 $loginTime = strtotime($sessionState[LoginState::LOGIN_DATETIME]);
-                if (time() - $loginTime > ($timeoutMinutes * 60)) {
+                if ($loginTime !== false && time() - $loginTime > ($timeoutMinutes * 60)) {
                     // Update trace
                     $trace = [];
                     if (!empty($sessionState[LoginState::LOGIN_FLOW_TRACE])) {
@@ -1333,7 +1355,7 @@ class LoginState extends CommonDBTM
 
                 if ($inactivityTimeout > 0) {
                     $lastActivityTime = strtotime($sessionState[LoginState::LAST_ACTIVITY]);
-                    if (time() - $lastActivityTime > ($inactivityTimeout * 60)) {
+                    if ($lastActivityTime !== false && time() - $lastActivityTime > ($inactivityTimeout * 60)) {
                         // Update trace
                         $trace = [];
                         if (!empty($sessionState[LoginState::LOGIN_FLOW_TRACE])) {

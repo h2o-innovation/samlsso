@@ -1031,6 +1031,16 @@ namespace GlpiPlugin\Samlsso {
             }
 
             /**
+             * Mock refreshing the request start timestamp.
+             *
+             * @return bool True if updated.
+             */
+            public function setRequestStart(): bool
+            {
+                return true;
+            }
+
+            /**
              * Asserts that SAML authentication succeeded.
              *
              * @return bool True if updated.
