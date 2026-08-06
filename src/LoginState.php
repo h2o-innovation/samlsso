@@ -34,7 +34,7 @@ declare(strict_types=1);
  * ------------------------------------------------------------------------
  *
  *  @package    GLPISaml
- *  @version    1.3.2
+ *  @version    1.3.3
  *  @author     Chris Gralike
  *  @copyright  Copyright (c) 2024 by Chris Gralike
  *  @license    GPLv3+
@@ -59,6 +59,7 @@ use Session;
 use Migration;
 use CommonDBTM;
 use DBConnection;
+use GlpiPlugin\Samlsso\Config\ConfigEntity;
 use GlpiPlugin\Samlsso\Exception\LoginStateException;
 
 /*
@@ -1235,6 +1236,41 @@ class LoginState extends CommonDBTM
             }
         }
 
+        // Performance indexes for the state table.
+        // `phase` is queried on every request by expireStaleAcsRequests() and
+        // expireStaleGlpiSessions(); `lastClickTime` is used by the
+        // cleanSessionSAML cron task. Without them these queries degrade into
+        // full table scans as the table grows, slowing down every request.
+        if ($DB->tableExists($table)) {
+            $indexes = [
+                ['idx_loginstates_phase', 'phase', 8],
+                ['idx_loginstates_lastclick', 'lastClickTime', null],
+            ];
+            foreach ($indexes as $index) {
+                [$indexName, $column, $prefixLen] = $index;
+                $index_exists = $DB->request([
+                    'SELECT' => 'INDEX_NAME',
+                    'FROM'   => 'information_schema.STATISTICS',
+                    'WHERE'  => [
+                        'TABLE_SCHEMA' => $_SESSION['glpidbname'] ?? $DB->dbdefault,
+                        'TABLE_NAME'   => $table,
+                        'INDEX_NAME'   => $indexName,
+                    ]
+                ]);
+                if ($index_exists->count() == 0) {
+                    $columnSpec = ($prefixLen !== null) ? "`$column`($prefixLen)" : "`$column`";
+                    $query = "ALTER TABLE `$table` ADD INDEX `$indexName` ($columnSpec)";
+                    if ($DB->doQuery($query)) {
+                        Session::addMessageAfterRedirect("🆗 Added index to: $table");
+                    } else {
+                        Session::addMessageAfterRedirect("⚠️ Failed to add index: " . $DB->error(), false, ERROR);
+                    }
+                } else {
+                    Session::addMessageAfterRedirect("🆗 Index already exists, skipping.");
+                }
+            }
+        }
+
         // Clean old cookies
         if (isset($_COOKIE['enforce_sso'])) {
             // Unset by setting expire in the past.
@@ -1269,7 +1305,27 @@ class LoginState extends CommonDBTM
     {
         global $DB;
 
-        // Query all records currently in SAML_ACS phase (2)
+        // Load the IdP request timeouts once instead of issuing a query per
+        // evaluated row (N+1). Falls back to 15 minutes per request when no
+        // config is available.
+        $timeoutByConfig = [];
+        $defaultTimeoutMinutes = 15;
+        try {
+            $configs = $DB->request([
+                'FROM'  => Config::getTable(),
+                'WHERE' => [ConfigEntity::IS_DELETED => 0]
+            ]);
+            foreach ($configs as $config) {
+                $timeout = (int)($config[ConfigEntity::REQUEST_TIMEOUT] ?? 0);
+                $timeoutByConfig[(int)$config[ConfigEntity::ID]] = ($timeout > 0) ? $timeout : $defaultTimeoutMinutes;
+            }
+        } catch (\Throwable $e) {
+            // Fall back to the default request timeout.
+        }
+
+        // Query all records currently in SAML_ACS phase (2). This predicate is
+        // served by the phase index, so it only resolves rows actually in the
+        // SAML_ACS phase instead of scanning the whole table.
         $where = [
             LoginState::PHASE => LoginState::PHASE_SAML_ACS
         ];
@@ -1278,19 +1334,9 @@ class LoginState extends CommonDBTM
         if ($iterator) {
             foreach ($iterator as $sessionState) {
                 $idpId = $sessionState[LoginState::IDP_ID];
-                $timeoutMinutes = 15; // default fallback if config is missing
-                if ($idpId && (int)$idpId > 0) {
-                    try {
-                        $configEntity = new \GlpiPlugin\Samlsso\Config\ConfigEntity((int)$idpId);
-                        if ($configEntity->isValid()) {
-                            $configTimeout = $configEntity->getField(\GlpiPlugin\Samlsso\Config\ConfigEntity::REQUEST_TIMEOUT);
-                            if ($configTimeout !== false && is_numeric($configTimeout)) {
-                                $timeoutMinutes = (int)$configTimeout;
-                            }
-                        }
-                    } catch (\Throwable $e) {
-                        // Keep default fallback
-                    }
+                $timeoutMinutes = $defaultTimeoutMinutes;
+                if ($idpId && isset($timeoutByConfig[(int)$idpId])) {
+                    $timeoutMinutes = $timeoutByConfig[(int)$idpId];
                 }
 
                 $loginTime = strtotime($sessionState[LoginState::LOGIN_DATETIME]);
@@ -1329,7 +1375,35 @@ class LoginState extends CommonDBTM
     {
         global $DB;
 
-        // Query all records currently in GLPI_AUTH phase (4)
+        // Load the IdP inactivity timeouts once instead of issuing a query per
+        // evaluated row (N+1). Only configurations that enforce an inactivity
+        // timeout are considered.
+        $inactivityByConfig = [];
+        try {
+            $configs = $DB->request([
+                'FROM'  => Config::getTable(),
+                'WHERE' => [ConfigEntity::IS_DELETED => 0]
+            ]);
+            foreach ($configs as $config) {
+                $timeout = (int)($config[ConfigEntity::INACTIVITY_TIMEOUT] ?? 0);
+                if ($timeout > 0) {
+                    $inactivityByConfig[(int)$config[ConfigEntity::ID]] = $timeout;
+                }
+            }
+        } catch (\Throwable $e) {
+            // Nothing to evaluate; treated as no configured inactivity timeout.
+        }
+
+        // When no IdP enforces an inactivity timeout there is nothing to
+        // evaluate. Short-circuit to avoid querying the state table on every
+        // request (the default configuration).
+        if (count($inactivityByConfig) === 0) {
+            return;
+        }
+
+        // Query all records currently in GLPI_AUTH phase (4). This predicate is
+        // served by the phase index, so it only resolves rows actually in the
+        // GLPI_AUTH phase instead of scanning the whole table.
         $where = [
             LoginState::PHASE => LoginState::PHASE_GLPI_AUTH
         ];
@@ -1338,20 +1412,10 @@ class LoginState extends CommonDBTM
         if ($iterator) {
             foreach ($iterator as $sessionState) {
                 $idpId = $sessionState[LoginState::IDP_ID];
-                $inactivityTimeout = 0; // default (disabled)
-                if ($idpId && (int)$idpId > 0) {
-                    try {
-                        $configEntity = new \GlpiPlugin\Samlsso\Config\ConfigEntity((int)$idpId);
-                        if ($configEntity->isValid()) {
-                            $configInactivity = $configEntity->getField(\GlpiPlugin\Samlsso\Config\ConfigEntity::INACTIVITY_TIMEOUT);
-                            if ($configInactivity !== false && is_numeric($configInactivity)) {
-                                $inactivityTimeout = (int)$configInactivity;
-                            }
-                        }
-                    } catch (\Throwable $e) {
-                        // Keep default fallback
-                    }
+                if (!$idpId || !isset($inactivityByConfig[(int)$idpId])) {
+                    continue;
                 }
+                $inactivityTimeout = $inactivityByConfig[(int)$idpId];
 
                 if ($inactivityTimeout > 0) {
                     $lastActivityTime = strtotime($sessionState[LoginState::LAST_ACTIVITY]);
