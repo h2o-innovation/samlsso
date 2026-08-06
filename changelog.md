@@ -1,4 +1,9 @@
 
+**V1.3.3**
+- Performance: Added `idx_loginstates_phase` and `idx_loginstates_lastclick` indexes to the login states table. `expireStaleAcsRequests()` and `expireStaleGlpiSessions()` filter by `phase` on every request and the `cleanSessionSAML` cron task deletes by `lastClickTime`; without these indexes the queries degrade into full table scans as the table grows, slowing down every GLPI request.
+- Performance: `expireStaleGlpiSessions()` now loads the IdP inactivity timeouts once and short-circuits when no IdP enforces an inactivity timeout (the default configuration), removing the table query and the per-row N+1 lookups from the request path.
+- Performance: `expireStaleAcsRequests()` now loads the IdP request timeouts once instead of issuing a query per evaluated row (N+1).
+
 **V1.3.2**
 - Fix: SAML request and inactivity timeouts no longer fire on state rows with empty or invalid `loginTime`/`lastClickTime` values. `strtotime('')` returned `false`, which previously made `time() - 0` exceed any configured timeout, instantly expiring states and producing spurious "SAML authentication request timed out" errors on re-authentication.
 - Fix: The ACS request timeout now measures the age of the current SAML AuthNRequest instead of the age of the state row. A new `LoginState::setRequestStart()` refreshes `loginTime` every time an AuthNRequest is issued, so re-authenticating after an idle period on a long-lived session no longer fails on the first attempt.
