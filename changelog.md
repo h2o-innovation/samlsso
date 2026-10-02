@@ -1,5 +1,6 @@
 
 **V1.3.3**
+- Performance: `updateLastActivity()` now throttles the `lastClickTime` database write (30s) instead of issuing a full row `UPDATE` on every authenticated request/AJAX call. The in-memory value is still refreshed; only the redundant write is skipped, so inactivity timeouts (minute granularity) are unaffected.
 - Performance: Added `idx_loginstates_phase` and `idx_loginstates_lastclick` indexes to the login states table. `expireStaleAcsRequests()` and `expireStaleGlpiSessions()` filter by `phase` on every request and the `cleanSessionSAML` cron task deletes by `lastClickTime`; without these indexes the queries degrade into full table scans as the table grows, slowing down every GLPI request.
 - Performance: `expireStaleGlpiSessions()` now loads the IdP inactivity timeouts once and short-circuits when no IdP enforces an inactivity timeout (the default configuration), removing the table query and the per-row N+1 lookups from the request path.
 - Performance: `expireStaleAcsRequests()` now loads the IdP request timeouts once instead of issuing a query per evaluated row (N+1).

@@ -482,10 +482,36 @@ class LoginState extends CommonDBTM
     }
 
     /**
+     * Minimum interval (in seconds) between two persisted `lastClickTime`
+     * updates for the same state.
+     *
+     * Authenticated sessions call updateLastActivity() on every request
+     * (including every AJAX call), which otherwise issues a full row UPDATE
+     * even though `lastClickTime` only feeds inactivity timeouts that are
+     * expressed in minutes. Throttling keeps those semantics while removing
+     * the redundant write from the hot path.
+     */
+    private const LAST_ACTIVITY_THROTTLE_SECONDS = 30;
+
+    /**
      * Updates the last activity time in the database for the current state.
+     *
+     * The database write is skipped when the previously stored activity is
+     * more recent than LAST_ACTIVITY_THROTTLE_SECONDS; the in-memory value is
+     * still refreshed so the rest of the request sees an up-to-date timestamp.
      */
     public function updateLastActivity(): void
     {
+        $previous = $this->state[LoginState::LAST_ACTIVITY] ?? null;
+        if (
+            $previous !== null
+            && ($previousTime = strtotime((string) $previous)) !== false
+            && (time() - $previousTime) < self::LAST_ACTIVITY_THROTTLE_SECONDS
+        ) {
+            $this->setLastActivity();
+            return;
+        }
+
         $this->setLastActivity();
         if (isset($this->state[LoginState::STATE_ID])) {
             $this->update($this->state);
