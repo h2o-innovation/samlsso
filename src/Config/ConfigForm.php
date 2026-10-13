@@ -207,6 +207,8 @@ HTML;
                     'saml_claim'    => (string)($cmRow['saml_claim']    ?? ''),
                     'default_value' => (string)($cmRow['default_value'] ?? ''),
                     'is_required'   => (int)($cmRow['is_required']      ?? 0),
+                    'regex'         => (string)($cmRow[ClaimMap::REGEX]   ?? ''),
+                    'replace'       => (string)($cmRow[ClaimMap::REPLACE] ?? ''),
                 ];
             }
 

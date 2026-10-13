@@ -113,7 +113,9 @@ class ClaimMapEntity extends ClaimMapItem
                 'glpi_field'    => (string)($row['glpi_field'] ?? ''),
                 'saml_claim'    => (string)($row['saml_claim'] ?? ''),
                 'default_value' => (string)($row['default_value'] ?? ''),
-                'is_required'   => (int)($row['is_required'] ?? 0)
+                'is_required'   => (int)($row['is_required'] ?? 0),
+                'regex'         => (string)($row[ClaimMap::REGEX] ?? ''),
+                'replace'       => (string)($row[ClaimMap::REPLACE] ?? '')
             ];
         }
     }
@@ -150,6 +152,67 @@ class ClaimMapEntity extends ClaimMapItem
             }
         }
         return '';
+    }
+
+    /**
+     * Get the configured regex transformation for a mapped GLPI field.
+     *
+     * @param string $glpiField The GLPI user field
+     * @param string $targetType The target type ('user_field' or 'rule_field')
+     * @return array{regex: string, replace: string} The transformation, empty when none
+     */
+    public function getTransform(string $glpiField, string $targetType = 'user_field'): array
+    {
+        foreach ($this->mappings as $mapping) {
+            if ($mapping['glpi_field'] === $glpiField && $mapping['target_type'] === $targetType) {
+                return [
+                    'regex'   => (string)($mapping[ClaimMapItem::REGEX] ?? ''),
+                    'replace' => (string)($mapping[ClaimMapItem::REPLACE] ?? '')
+                ];
+            }
+        }
+        return ['regex' => '', 'replace' => ''];
+    }
+
+    /**
+     * Apply an optional regex transformation to a resolved claim value.
+     *
+     * The pattern is expected without delimiters. When no pattern is configured
+     * the value is returned untouched. When the pattern yields no match the
+     * result is an empty string so the caller can fall back to the configured
+     * default value. Transformed values are normalized to Title Case.
+     *
+     * @param string $value   The raw claim value
+     * @param string $regex   PCRE pattern without delimiters (empty = no-op)
+     * @param string $replace Replacement string (e.g. '$1')
+     * @return string The transformed value or an empty string when unmatchable
+     */
+    public function applyTransform(string $value, string $regex, string $replace): string
+    {
+        if ($regex === '') {
+            return $value;
+        }
+
+        $count  = 0;
+        $result = @preg_replace('/' . $regex . '/u', $replace, $value, -1, $count);
+        if ($result === null || $count === 0) {
+            return '';
+        }
+
+        return self::toTitleCase($result);
+    }
+
+    /**
+     * Normalize a derived value to Title Case, treating common separators as
+     * word boundaries (e.g. 'pedro.santos' becomes 'Pedro Santos').
+     *
+     * @param string $value The value to normalize
+     * @return string The Title Cased value
+     */
+    private static function toTitleCase(string $value): string
+    {
+        $normalized = str_replace(['.', '_', '-'], ' ', $value);
+        return mb_convert_case($normalized, MB_CASE_TITLE, 'UTF-8');
     }
 
     /**
@@ -321,6 +384,8 @@ class ClaimMapEntity extends ClaimMapItem
         $samlClaim    = $mapping['saml_claim'] ?? '';
         $defaultValue = $mapping['default_value'] ?? '';
         $isRequired   = $mapping['is_required'] ?? 0;
+        $regex        = $mapping[ClaimMapItem::REGEX] ?? '';
+        $replace      = $mapping[ClaimMapItem::REPLACE] ?? '';
 
         if ($targetType === self::TARGET_TYPE_USER_FIELD) {
             if ($glpiField === self::FIELD_USERNAME) {
@@ -352,8 +417,10 @@ class ClaimMapEntity extends ClaimMapItem
         $claimVal      = $this->validateSamlClaim($samlClaim);
         $defaultVal    = $this->validateDefaultValue($defaultValue);
         $requiredVal   = $this->validateIsRequired($isRequired);
+        $regexVal      = $this->validateRegex($regex);
+        $replaceVal    = $this->validateReplacement($replace);
 
-        if (!$targetTypeVal['valid'] || !$fieldVal['valid'] || !$claimVal['valid'] || !$defaultVal['valid']) {
+        if (!$targetTypeVal['valid'] || !$fieldVal['valid'] || !$claimVal['valid'] || !$defaultVal['valid'] || !$regexVal['valid'] || !$replaceVal['valid']) {
             $this->isValid = false;
             $rowError = '';
             if (!$targetTypeVal['valid']) {
@@ -368,6 +435,12 @@ class ClaimMapEntity extends ClaimMapItem
             if (!$defaultVal['valid']) {
                 $rowError .= $defaultVal['error'] . '; ';
             }
+            if (!$regexVal['valid']) {
+                $rowError .= $regexVal['error'] . '; ';
+            }
+            if (!$replaceVal['valid']) {
+                $rowError .= $replaceVal['error'] . '; ';
+            }
             $this->errors['mapping_' . $index] = rtrim($rowError, '; ');
         } else {
             $uniqueKey = $targetTypeVal['value'] . ':' . $fieldVal['value'];
@@ -381,7 +454,9 @@ class ClaimMapEntity extends ClaimMapItem
                     'glpi_field'    => $fieldVal['value'],
                     'saml_claim'    => $claimVal['value'],
                     'default_value' => $defaultVal['value'],
-                    'is_required'   => $requiredVal['value']
+                    'is_required'   => $requiredVal['value'],
+                    'regex'         => $regexVal['value'],
+                    'replace'       => $replaceVal['value']
                 ];
             }
         }
@@ -424,7 +499,9 @@ class ClaimMapEntity extends ClaimMapItem
                 'glpi_field'    => $mapping['glpi_field'],
                 'saml_claim'    => $mapping['saml_claim'],
                 'default_value' => $mapping['default_value'],
-                'is_required'   => $mapping['is_required']
+                'is_required'   => $mapping['is_required'],
+                ClaimMap::REGEX   => $mapping[ClaimMapItem::REGEX] ?? '',
+                ClaimMap::REPLACE => $mapping[ClaimMapItem::REPLACE] ?? ''
             ];
             $claimMap->add($input);
         }
@@ -623,6 +700,14 @@ class ClaimMapEntity extends ClaimMapItem
                 $val = $claims[$claimKey][0];
             }
 
+            $transform = $this->getTransform($field, ClaimMapItem::TARGET_TYPE_USER_FIELD);
+            if ($val !== null && $transform['regex'] !== '') {
+                $val = $this->applyTransform((string)$val, $transform['regex'], $transform['replace']);
+                if ($val === '') {
+                    $val = null;
+                }
+            }
+
             if ($val === null || strlen((string)$val) > 255) {
                 $val = $this->getDefault($field, ClaimMapItem::TARGET_TYPE_USER_FIELD);
             }
@@ -721,6 +806,14 @@ class ClaimMapEntity extends ClaimMapItem
         $val = null;
         if ($claimKey !== null && isset($claims[$claimKey][0])) {
             $val = $claims[$claimKey][0];
+        }
+
+        $transform = $this->getTransform($field, ClaimMapItem::TARGET_TYPE_RULE_FIELD);
+        if ($val !== null && $transform['regex'] !== '') {
+            $val = $this->applyTransform((string)$val, $transform['regex'], $transform['replace']);
+            if ($val === '') {
+                $val = null;
+            }
         }
 
         if ($val === null || strlen((string)$val) > 255) {

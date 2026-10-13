@@ -59,6 +59,12 @@ class ClaimMapItem
     public const TARGET_TYPE_RULE_FIELD = 'rule_field';
 
     /**
+     * Optional PCRE transformation applied to the resolved claim value.
+     */
+    public const REGEX   = 'regex';
+    public const REPLACE = 'replace';
+
+    /**
      * Allowed target fields for claim mapping.
      */
     public const FIELD_USERNAME      = 'username';
@@ -225,6 +231,55 @@ class ClaimMapItem
             'valid' => true,
             'value' => empty($value) ? 0 : 1,
             'error' => false
+        ];
+    }
+
+    /**
+     * Validate the optional PCRE pattern used to transform a claim value.
+     *
+     * The pattern is stored without delimiters; the delimiters are added at
+     * evaluation time. An empty value means "no transformation" and is valid.
+     *
+     * @param mixed $value The regex value
+     * @return array Validation result
+     */
+    protected function validateRegex(mixed $value): array
+    {
+        $error = false;
+        $value = is_string($value) ? trim($value) : '';
+
+        if (strlen($value) > 255) {
+            $error = __('Regex pattern cannot exceed 255 characters', PLUGIN_NAME);
+        } elseif ($value !== '' && @preg_match('/' . $value . '/u', '') === false) {
+            $error = __('Invalid regex pattern', PLUGIN_NAME);
+        }
+
+        return [
+            'valid' => !$error,
+            'value' => $value,
+            'error' => $error
+        ];
+    }
+
+    /**
+     * Validate the optional replacement string used together with the regex.
+     *
+     * @param mixed $value The replacement value
+     * @return array Validation result
+     */
+    protected function validateReplacement(mixed $value): array
+    {
+        $error = false;
+        $value = is_string($value) ? (string)$value : '';
+
+        if (strlen($value) > 255) {
+            $error = __('Replacement value cannot exceed 255 characters', PLUGIN_NAME);
+        }
+
+        return [
+            'valid' => !$error,
+            'value' => $value,
+            'error' => $error
         ];
     }
 }

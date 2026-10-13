@@ -798,6 +798,109 @@ XML;
 
             echo "✅ Dynamic custom rule field mappings resolved correctly\n";
         }
+
+        /**
+         * Test deriving first/last name from the email claim with a regex transform.
+         *
+         * @throws \Exception If the transform is not applied correctly.
+         */
+        public function testRegexTransformMapping(): void
+        {
+            $emailClaim = SamlUser::SCHEMA_EMAILADDRESS;
+
+            // Scenario 1: single dot -> first token as firstname, remaining as realname
+            $this->db->setResponse('glpi_plugin_samlsso_claimmaps', [
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_USERNAME, 'saml_claim' => 'uid'],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_EMAIL, 'saml_claim' => $emailClaim],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_FIRSTNAME, 'saml_claim' => $emailClaim, 'regex' => '^([^.@]+).*$', 'replace' => '$1'],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_REALNAME, 'saml_claim' => $emailClaim, 'regex' => '^[^.@]+\.([^@]+)@.*$', 'replace' => '$1'],
+            ]);
+
+            $response = new TestResponse();
+            $response->mockNameId = 'joao.santos';
+            $response->mockAttributes = [
+                'uid'       => ['joao.santos'],
+                $emailClaim => ['joao.santos@h2oinnovation.com.br'],
+            ];
+
+            $userFields = SamlUser::getUserInputFieldsFromSamlClaim($response, 1);
+            if ($userFields[SamlUser::FIRSTNAME] !== 'Joao') {
+                throw new \Exception("Regex firstname transform failed: got " . var_export($userFields[SamlUser::FIRSTNAME], true));
+            }
+            if ($userFields[SamlUser::REALNAME] !== 'Santos') {
+                throw new \Exception("Regex realname transform failed: got " . var_export($userFields[SamlUser::REALNAME], true));
+            }
+
+            // Scenario 2: multiple dots -> everything after the first dot is the realname
+            $response->mockAttributes[$emailClaim] = ['joao.pedro.santos@h2oinnovation.com.br'];
+            $userFields = SamlUser::getUserInputFieldsFromSamlClaim($response, 1);
+            if ($userFields[SamlUser::FIRSTNAME] !== 'Joao') {
+                throw new \Exception("Multi-dot firstname transform failed: got " . var_export($userFields[SamlUser::FIRSTNAME], true));
+            }
+            if ($userFields[SamlUser::REALNAME] !== 'Pedro Santos') {
+                throw new \Exception("Multi-dot realname transform failed: got " . var_export($userFields[SamlUser::REALNAME], true));
+            }
+
+            // Scenario 3: no dot -> realname regex does not match, falls back to the default
+            $this->db->setResponse('glpi_plugin_samlsso_claimmaps', [
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_USERNAME, 'saml_claim' => 'uid'],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_EMAIL, 'saml_claim' => $emailClaim],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_FIRSTNAME, 'saml_claim' => $emailClaim, 'regex' => '^([^.@]+).*$', 'replace' => '$1'],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_REALNAME, 'saml_claim' => $emailClaim, 'regex' => '^[^.@]+\.([^@]+)@.*$', 'replace' => '$1', 'default_value' => 'SemSobrenome'],
+            ]);
+
+            $response->mockAttributes[$emailClaim] = ['joao@h2oinnovation.com.br'];
+            $userFields = SamlUser::getUserInputFieldsFromSamlClaim($response, 1);
+            if ($userFields[SamlUser::FIRSTNAME] !== 'Joao') {
+                throw new \Exception("No-dot firstname transform failed: got " . var_export($userFields[SamlUser::FIRSTNAME], true));
+            }
+            if ($userFields[SamlUser::REALNAME] !== 'SemSobrenome') {
+                throw new \Exception("No-dot realname default fallback failed: got " . var_export($userFields[SamlUser::REALNAME], true));
+            }
+
+            // Scenario 4: rows without a transform keep the raw value untouched (no Title Case)
+            $this->db->setResponse('glpi_plugin_samlsso_claimmaps', [
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_USERNAME, 'saml_claim' => 'uid'],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_EMAIL, 'saml_claim' => $emailClaim],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_REALNAME, 'saml_claim' => 'surname-claim'],
+            ]);
+
+            $response->mockAttributes = [
+                'uid'           => ['joao.santos'],
+                $emailClaim     => ['joao.santos@h2oinnovation.com.br'],
+                'surname-claim' => ['van der berg'],
+            ];
+            $userFields = SamlUser::getUserInputFieldsFromSamlClaim($response, 1);
+            if ($userFields[SamlUser::REALNAME] !== 'van der berg') {
+                throw new \Exception("Non-transformed value should stay untouched: got " . var_export($userFields[SamlUser::REALNAME], true));
+            }
+
+            echo "✅ Regex transform derives first/last name from email correctly\n";
+        }
+
+        /**
+         * Test that invalid regex patterns are rejected by validation.
+         *
+         * @throws \Exception If an invalid regex is accepted.
+         */
+        public function testInvalidRegexRejected(): void
+        {
+            $entity = new ClaimMapEntity(1);
+            $success = $entity->save([
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_USERNAME, 'saml_claim' => 'uid'],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_EMAIL, 'saml_claim' => 'mail'],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_FIRSTNAME, 'saml_claim' => 'mail', 'regex' => '([', 'replace' => '$1'],
+            ]);
+
+            if ($success) {
+                throw new \Exception("Validation failed to reject an invalid regex pattern.");
+            }
+            if (empty($entity->getErrors())) {
+                throw new \Exception("No validation error was recorded for the invalid regex.");
+            }
+
+            echo "✅ Invalid regex patterns are rejected by validation\n";
+        }
     }
 }
 
@@ -808,6 +911,8 @@ namespace {
         $test->testClaimMapEntityValidation();
         $test->testFallbackMapping();
         $test->testCustomMapping();
+        $test->testRegexTransformMapping();
+        $test->testInvalidRegexRejected();
         $test->testObservedClaimsTracking();
         $test->testXmlAnonymization();
         $test->testFallbackAndRequiredValidation();
