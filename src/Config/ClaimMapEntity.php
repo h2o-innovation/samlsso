@@ -189,6 +189,24 @@ class ClaimMapEntity extends ClaimMapItem
      */
     public function applyTransform(string $value, string $regex, string $replace): string
     {
+        return self::transform($value, $regex, $replace);
+    }
+
+    /**
+     * Apply an optional regex transformation to a value (stateless helper).
+     *
+     * The pattern is expected without delimiters. When no pattern is configured
+     * the value is returned untouched. When the pattern yields no match the
+     * result is an empty string so the caller can fall back to a default value.
+     * Transformed values are normalized to Title Case.
+     *
+     * @param string $value   The raw value
+     * @param string $regex   PCRE pattern without delimiters (empty = no-op)
+     * @param string $replace Replacement string (e.g. '$1')
+     * @return string The transformed value or an empty string when unmatchable
+     */
+    public static function transform(string $value, string $regex, string $replace): string
+    {
         if ($regex === '') {
             return $value;
         }

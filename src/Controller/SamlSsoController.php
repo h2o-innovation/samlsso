@@ -56,6 +56,7 @@ use GlpiPlugin\Samlsso\LoginState;                                      //
 use GlpiPlugin\Samlsso\LoginFlow\Acs;                                   // Required to call the ACS object
 use GlpiPlugin\Samlsso\LoginFlow\Meta;                                  // Required to call Exclude object
 use GlpiPlugin\Samlsso\Config\ConfigForm;                               // Required to call Config object
+use GlpiPlugin\Samlsso\UserSync;                                        // Required to handle manual user synchronization
 use GlpiPlugin\Samlsso\LoginFlow\LoginFlowForm;                         //
 use Glpi\Application\View\TemplateRenderer;
 
@@ -211,6 +212,17 @@ final class SamlSsoController extends AbstractController
     {
         (new RuleSaml)->invokeForm();                                  // Call the ACS handler.
         return new Response();
+    }
+
+    ####################################################################
+    // Manual user synchronization route
+    public const USERSYNC_ROUTE = 'front/usersync';                     // Route being registered by __class__
+    public const USERSYNC_NAME  = 'samlsso_usersync';                   // Route name
+
+    #[Route(self::USERSYNC_ROUTE, name: self::USERSYNC_NAME)]           // Decorator to register route to controller
+    public function usersync(Request $request): Response                // What to do if route is invoked.
+    {
+        return UserSync::handleSync($request);                          // Delegate the synchronization to UserSync.
     }
 
 }
