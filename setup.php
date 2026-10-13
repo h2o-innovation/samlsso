@@ -50,6 +50,7 @@ use Glpi\Http\SessionManager;
 use GlpiPlugin\Samlsso\Config;
 use GlpiPlugin\Samlsso\LoginFlow;
 use GlpiPlugin\Samlsso\RuleSamlCollection;
+use GlpiPlugin\Samlsso\UserSync;
 use GlpiPlugin\Samlsso\Controller\SamlSsoController;
 
 global $CFG_GLPI;
@@ -159,6 +160,9 @@ function plugin_init_samlsso(): void                                            
         // Register and hook the loginFlow to Hooks::POST_INIT.
         Plugin::registerClass(LoginFlow::class);
         $PLUGIN_HOOKS[Hooks::POST_INIT][PLUGIN_NAME]        = 'plugin_samlsso_evalAuth';
+
+        // Register the manual synchronization tab on the GLPI User form.
+        Plugin::registerClass(UserSync::class, ['addtabon' => ['User']]);
 
         // Hook the login buttons to Hooks::DISPLAY_LOGIN
         $PLUGIN_HOOKS[Hooks::DISPLAY_LOGIN][PLUGIN_NAME]    = 'plugin_samlsso_displaylogin';

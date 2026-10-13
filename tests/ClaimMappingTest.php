@@ -936,6 +936,35 @@ XML;
 
             echo "✅ Outdated claim mapping schema is detected on save\n";
         }
+
+        /**
+         * Test the stateless regex transform helper used for manual synchronization.
+         *
+         * @throws \Exception If a transform does not produce the expected value.
+         */
+        public function testStaticTransform(): void
+        {
+            $cases = [
+                ['joao.santos@h2oinnovation.com.br', '^([^.@]+).*$', '$1', 'Joao'],
+                ['joao.pedro.santos@h2oinnovation.com.br', '^[^.@]+\.([^@]+)@.*$', '$1', 'Pedro Santos'],
+                ['joao@h2oinnovation.com.br', '^[^.@]+\.([^@]+)@.*$', '$1', ''],
+                ['untouched', '', '$1', 'untouched'],
+            ];
+
+            foreach ($cases as $case) {
+                $result = ClaimMapEntity::transform($case[0], $case[1], $case[2]);
+                if ($result !== $case[3]) {
+                    throw new \Exception(sprintf(
+                        "transform('%s') returned '%s', expected '%s'.",
+                        $case[0],
+                        $result,
+                        $case[3]
+                    ));
+                }
+            }
+
+            echo "✅ Static regex transform derives values correctly\n";
+        }
     }
 }
 
@@ -949,6 +978,7 @@ namespace {
         $test->testRegexTransformMapping();
         $test->testInvalidRegexRejected();
         $test->testSchemaGuardOnSave();
+        $test->testStaticTransform();
         $test->testObservedClaimsTracking();
         $test->testXmlAnonymization();
         $test->testFallbackAndRequiredValidation();
