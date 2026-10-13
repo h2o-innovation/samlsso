@@ -123,6 +123,22 @@ class ClaimMap extends CommonDBTM
     public const IS_REQUIRED = 'is_required';
 
     /**
+     * @var string Database column: optional PCRE pattern (without delimiters)
+     *             applied to the resolved SAML claim value before it is written
+     *             into GLPI_FIELD. Enables deriving a field from another claim,
+     *             e.g. extracting the first name from an email address. Stored
+     *             as an empty string when no transformation is configured.
+     */
+    public const REGEX = 'regex';
+
+    /**
+     * @var string Database column: replacement string used together with REGEX
+     *             (e.g. '$1' to keep the first capture group). Stored as an
+     *             empty string when no transformation is configured.
+     */
+    public const REPLACE = 'replace';
+
+    /**
      * Install the ClaimMap database table.
      *
      * Called by hook.php:plugin_samlsso_install() during plugin installation or
@@ -181,6 +197,8 @@ class ClaimMap extends CommonDBTM
                 `saml_claim`    VARCHAR(255) NOT NULL,
                 `default_value` VARCHAR(255) NOT NULL DEFAULT '',
                 `is_required`   TINYINT NOT NULL DEFAULT '0',
+                `regex`         VARCHAR(255) NOT NULL DEFAULT '',
+                `replace`       VARCHAR(255) NOT NULL DEFAULT '',
                 PRIMARY KEY (`id`),
                 KEY `configs_id` (`configs_id`),
                 UNIQUE KEY `configs_id_target_glpi` (`configs_id`, `target_type`, `glpi_field`)
@@ -208,6 +226,12 @@ class ClaimMap extends CommonDBTM
             }
             if (!$DB->fieldExists($table, 'is_required', false)) {
                 $migration->addField($table, 'is_required', 'TINYINT', ['value' => '0', 'update' => true]);
+            }
+            if (!$DB->fieldExists($table, 'regex', false)) {
+                $migration->addField($table, 'regex', 'VARCHAR(255)', ['value' => '', 'update' => true]);
+            }
+            if (!$DB->fieldExists($table, 'replace', false)) {
+                $migration->addField($table, 'replace', 'VARCHAR(255)', ['value' => '', 'update' => true]);
             }
 
             /**

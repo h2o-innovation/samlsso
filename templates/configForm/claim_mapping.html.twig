@@ -78,11 +78,13 @@
             <table class="table table-hover align-middle">
                 <thead>
                     <tr>
-                        <th style="width: 18%;">{{ __('Target Type', plugin) }}</th>
-                        <th style="width: 18%;">{{ __('GLPI Target Field', plugin) }}</th>
-                        <th style="width: 25%;">{{ __('SAML Response Claim Key', plugin) }}</th>
-                        <th style="width: 18%;">{{ __('Default Fallback Value', plugin) }}</th>
-                        <th class="text-center" style="width: 8%;">{{ __('Required', plugin) }}</th>
+                        <th style="width: 12%;">{{ __('Target Type', plugin) }}</th>
+                        <th style="width: 12%;">{{ __('GLPI Target Field', plugin) }}</th>
+                        <th style="width: 20%;">{{ __('SAML Response Claim Key', plugin) }}</th>
+                        <th style="width: 12%;">{{ __('Default Fallback Value', plugin) }}</th>
+                        <th style="width: 15%;">{{ __('Regex Transform', plugin) }}</th>
+                        <th style="width: 12%;">{{ __('Replace', plugin) }}</th>
+                        <th class="text-center" style="width: 5%;">{{ __('Required', plugin) }}</th>
                         <th>{{ __('Status', plugin) }}</th>
                         <th style="width: 8%;"></th>
                     </tr>
@@ -135,6 +137,12 @@
                             </td>
                             <td>
                                 <input type="text" name="claim_map[{{ index }}][default_value]" value="{{ mapping.default_value }}" class="form-control">
+                            </td>
+                            <td>
+                                <input type="text" name="claim_map[{{ index }}][regex]" value="{{ mapping.regex|default('') }}" class="form-control font-monospace" placeholder="^([^.@]+).*$">
+                            </td>
+                            <td>
+                                <input type="text" name="claim_map[{{ index }}][replace]" value="{{ mapping.replace|default('') }}" class="form-control font-monospace" placeholder="$1">
                             </td>
                             <td class="text-center">
                                 {% if is_system_required %}

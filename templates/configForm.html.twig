@@ -518,7 +518,7 @@
 
     let rowCounter = 0;
 
-    function addRow(targetType = '', glpiField = '', samlClaim = '', defaultValue = '', isRequired = 0) {
+    function addRow(targetType = '', glpiField = '', samlClaim = '', defaultValue = '', isRequired = 0, regex = '', replace = '') {
         const tbody = document.getElementById('claim_mapping_tbody');
         const index = rowCounter++;
         
@@ -592,6 +592,12 @@
             </td>
             <td>
                 <input type="text" name="claim_map[${index}][default_value]" value="${defaultValue}" class="form-control">
+            </td>
+            <td>
+                <input type="text" name="claim_map[${index}][regex]" value="${regex}" class="form-control font-monospace" placeholder="^([^.@]+).*$">
+            </td>
+            <td>
+                <input type="text" name="claim_map[${index}][replace]" value="${replace}" class="form-control font-monospace" placeholder="$1">
             </td>
             <td class="text-center">
                 <input type="checkbox" name="claim_map[${index}][is_required]" value="1" class="form-check-input" ${checkedAttr} ${disabledAttr}>
