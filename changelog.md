@@ -1,3 +1,5 @@
+**V1.5.0**
+- Feature: manual samlSSO synchronization on the User form
 
 **V1.4.0**
 - Build: Added automated releases with semantic-release (GitHub Actions workflow on `main`). The next version is derived from Conventional Commits and the release automatically bumps `PLUGIN_SAMLSSO_VERSION`, the PHP `@version` docstrings and `samlsso.xml`, prepends an entry to this changelog, builds `release/samlsso.zip` and publishes the git tag + GitHub Release. The manual `tools/mkzip.sh` flow remains available.
