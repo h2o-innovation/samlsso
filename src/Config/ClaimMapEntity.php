@@ -484,6 +484,23 @@ class ClaimMapEntity extends ClaimMapItem
         }
 
         $claimMapTable = ClaimMap::getTable();
+
+        /*
+         * Guard against an outdated database schema. GLPI's CommonDBTM::add()
+         * silently drops input keys that are not present as table columns, so a
+         * missing regex/replace column would make the mapping appear saved while
+         * the transformation values are discarded. Detect it explicitly and
+         * surface an actionable error instead of reporting a false success.
+         */
+        if (method_exists($DB, 'fieldExists')
+            && (!$DB->fieldExists($claimMapTable, ClaimMap::REGEX, false)
+                || !$DB->fieldExists($claimMapTable, ClaimMap::REPLACE, false))
+        ) {
+            $this->isValid = false;
+            $this->errors['schema_outdated'] = __('The claim mapping table is missing the regex/replace columns. Please update or reinstall the samlSSO plugin so the database migration is applied.', PLUGIN_NAME);
+            return false;
+        }
+
         $DB->delete(
             $claimMapTable,
             [
@@ -503,7 +520,11 @@ class ClaimMapEntity extends ClaimMapItem
                 ClaimMap::REGEX   => $mapping[ClaimMapItem::REGEX] ?? '',
                 ClaimMap::REPLACE => $mapping[ClaimMapItem::REPLACE] ?? ''
             ];
-            $claimMap->add($input);
+            if (!$claimMap->add($input)) {
+                $this->isValid = false;
+                $this->errors['save_failed'] = sprintf(__('Failed to save the mapping for "%s". Please check the GLPI logs.', PLUGIN_NAME), $mapping['glpi_field']);
+                return false;
+            }
         }
 
         return true;

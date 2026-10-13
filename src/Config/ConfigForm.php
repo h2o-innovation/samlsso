@@ -56,6 +56,7 @@ use Glpi\Application\View\TemplateRenderer;
 use OneLogin\Saml2\Constants as Saml2Const;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use GlpiPlugin\Samlsso\Controller\SamlSsoController;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 
@@ -438,6 +439,10 @@ HTML;
      */
     public function invokeForm(Request $request): Response|RedirectResponse     // NOSONAR - CRUDE returns by design.
     {
+        if ($request->get('action') === 'test_mapping') {
+            return $this->testClaimMapping($request);
+        }
+
         if ($request->get('action') === 'forcelogoff') {
             $config = new Config();
             if (!$config->canUpdate()) {
@@ -507,6 +512,150 @@ HTML;
 
 
     /**
+     * Test the claim mapping transformations against a sample value and,
+     * optionally, apply the resolved fields to an existing GLPI user.
+     *
+     * The mapping rows are read from the submitted form (so administrators can
+     * validate unsaved changes) rather than from the database. Only mappings
+     * that define a regex transform are evaluated. This lets an administrator
+     * confirm that, for example, an email address is split into the expected
+     * first name and surname before saving.
+     *
+     * @param  Request $request Incoming AJAX request.
+     * @return JsonResponse     Preview results or apply summary.
+     */
+    private function testClaimMapping(Request $request): JsonResponse
+    {
+        Session::checkRight('config', READ);
+
+        $payload = $request->request->all();
+
+        try {
+            if (method_exists(\Session::class, 'checkCSRF') && !\Session::checkCSRF($payload)) {
+                return new JsonResponse(['success' => false, 'error' => __('Invalid CSRF token.', PLUGIN_NAME)], 403);
+            }
+        } catch (\Throwable $e) {
+            if (empty($payload['_glpi_csrf_token'])) {
+                return new JsonResponse(['success' => false, 'error' => __('Invalid CSRF token.', PLUGIN_NAME)], 403);
+            }
+        }
+
+        $sample = (string) $request->request->get('sample', '');
+        $mode   = (string) $request->request->get('mode', 'preview');
+        $rows   = $request->request->get('claim_map', []);
+        if (!is_array($rows)) {
+            $rows = [];
+        }
+
+        $entity    = new ClaimMapEntity(-1);
+        $results   = [];
+        $transform = [];
+
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+            $regex = (string) ($row['regex'] ?? '');
+            if ($regex === '') {
+                continue;
+            }
+
+            $glpiField = (string) ($row['glpi_field'] ?? '');
+            $replace   = (string) ($row['replace'] ?? '');
+            $default   = (string) ($row['default_value'] ?? '');
+
+            if (@preg_match('/' . $regex . '/u', '') === false) {
+                $result = __('Invalid regex pattern', PLUGIN_NAME);
+                $valid  = false;
+            } else {
+                $result = $entity->applyTransform($sample, $regex, $replace);
+                if ($result === '') {
+                    $result = $default;
+                }
+                $valid = true;
+            }
+
+            $results[] = [
+                'glpi_field' => $glpiField,
+                'saml_claim' => (string) ($row['saml_claim'] ?? ''),
+                'regex'      => $regex,
+                'replace'    => $replace,
+                'result'     => $result,
+            ];
+
+            if ($valid) {
+                $transform[$glpiField] = $result;
+            }
+        }
+
+        if ($mode === 'apply') {
+            return $this->applyClaimMappingToUser($request, $transform);
+        }
+
+        return new JsonResponse(['success' => true, 'results' => $results]);
+    }
+
+    /**
+     * Apply the resolved claim mapping fields to an existing GLPI user.
+     *
+     * Used by the "Synchronize user" action so an administrator can refresh an
+     * existing account (e.g. first/last name derived from its email) without
+     * requiring the user to log in again.
+     *
+     * @param  Request     $request   Incoming AJAX request containing the user login.
+     * @param  array       $transform Resolved field values keyed by GLPI field.
+     * @return JsonResponse           Apply summary.
+     */
+    private function applyClaimMappingToUser(Request $request, array $transform): JsonResponse
+    {
+        if (!\Session::haveRight('config', UPDATE)) {
+            return new JsonResponse(['success' => false, 'error' => __('You do not have permission to perform this action.', PLUGIN_NAME)], 403);
+        }
+
+        $login = trim((string) $request->request->get('user_login', ''));
+        if ($login === '') {
+            return new JsonResponse(['success' => false, 'error' => __('Provide a GLPI user login to synchronize.', PLUGIN_NAME)]);
+        }
+
+        $user = new \User();
+        if (!$user->getFromDBbyName($login)) {
+            return new JsonResponse(['success' => false, 'error' => sprintf(__('GLPI user "%s" was not found.', PLUGIN_NAME), $login)]);
+        }
+        if (!$user->canUpdate()) {
+            return new JsonResponse(['success' => false, 'error' => __('You do not have permission to update this user.', PLUGIN_NAME)], 403);
+        }
+
+        $fieldMap = [
+            ClaimMapItem::FIELD_USERNAME => 'name',
+            ClaimMapItem::FIELD_REALNAME => 'realname',
+            ClaimMapItem::FIELD_FIRSTNAME => 'firstname',
+            ClaimMapItem::FIELD_PHONE    => 'phone',
+            ClaimMapItem::FIELD_MOBILE   => 'mobile',
+        ];
+
+        $input   = ['id' => (int) $user->fields['id']];
+        $applied = [];
+        foreach ($transform as $glpiField => $value) {
+            $column = $fieldMap[$glpiField] ?? null;
+            if ($column !== null && $value !== '') {
+                $input[$column]   = $value;
+                $applied[$column] = $value;
+            }
+        }
+
+        if (count($applied) === 0) {
+            return new JsonResponse(['success' => false, 'error' => __('No transformable field produced a value for this sample.', PLUGIN_NAME)]);
+        }
+
+        if (!$user->update($input)) {
+            return new JsonResponse(['success' => false, 'error' => __('Failed to update the GLPI user.', PLUGIN_NAME)]);
+        }
+
+        return new JsonResponse(['success' => true, 'applied' => $applied, 'user' => $user->fields['name']]);
+    }
+
+
+    /**
      * Populates the GLPI headers (UI)
      * Might cause headers to be send prematurely as Html::header contains echo operations.
      *
@@ -548,7 +697,12 @@ HTML;
             if (($id = $config->add($fields))) {
                 // Save claim mappings if present in postData
                 $claimMapEntity = new ClaimMapEntity((int)$id);
-                $claimMapEntity->save($claimMap);
+                if (!$claimMapEntity->save($claimMap)) {
+                    foreach ($claimMapEntity->getErrors() as $claimError) {
+                        Session::addMessageAfterRedirect($claimError, false, ERROR);
+                    }
+                    return new RedirectResponse(PLUGIN_SAMLSSO_WEBDIR.SamlSsoController::CONFIGFORM_ROUTE.'?id='.$id);
+                }
                 // Leave succes message for user and redirect
                 Session::addMessageAfterRedirect(__('Successfully added new samlSSO configuration.', PLUGIN_NAME));
                 return new RedirectResponse(PLUGIN_SAMLSSO_WEBDIR.SamlSsoController::CONFIGFORM_ROUTE.'?id='.$id);
@@ -593,7 +747,12 @@ HTML;
             if($config->canUpdate()       &&
                $config->update($fields) ){
                 // Save claim mappings
-                $claimMapEntity->save($claimMap);
+                if (!$claimMapEntity->save($claimMap)) {
+                    foreach ($claimMapEntity->getErrors() as $claimError) {
+                        Session::addMessageAfterRedirect($claimError, false, ERROR);
+                    }
+                    return new RedirectResponse(PLUGIN_SAMLSSO_WEBDIR.SamlSsoController::CONFIGFORM_ROUTE.'?id='.$postData['id']);
+                }
                 // Leave a success message for the user and redirect using ID.
                 Session::addMessageAfterRedirect(__('Configuration updated successfully', PLUGIN_NAME));
                 return new RedirectResponse(PLUGIN_SAMLSSO_WEBDIR.SamlSsoController::CONFIGFORM_ROUTE.'?id='.$postData['id']);
