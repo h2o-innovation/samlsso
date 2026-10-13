@@ -76,21 +76,48 @@ Execute the entire automated test runner from the root of the plugin directory t
 php tests/RunAllTests.php
 ```
 
-### 2. Creating a Release
-To package a new release zip using `tools/mkzip.sh`:
-1. Update the version constant `PLUGIN_SAMLSSO_VERSION` in `setup.php` (e.g. to `'1.2.7'`).
-2. Update the `OLDVERSION` and `NEWVERSION` variables in `tools/mkzip.sh` to match the version bump (e.g. `OLDVERSION='1.2.6'` and `NEWVERSION='1.2.7'`).
-3. Run the release packaging script:
-   ```bash
-   ./tools/mkzip.sh
-   ```
-   *Note: This script automatically bumps version docstrings in all PHP files (excluding `vendor/`), executes the automated test runner, and aborts the release packaging if any tests fail.*
-4. Manually update `samlsso.xml` to add a new `<version>` block listing the new version and its download URL.
-5. Run the test suite:
-   ```bash
-   php tests/RunAllTests.php
-   ```
-   *Note: All tests must be green before pushing.*
+### 2. Creating a Release (automated — semantic-release)
+
+Releases are automated with [semantic-release](https://semantic-release.gitbook.io/) via the
+[`Release`](../../.github/workflows/release.yml) GitHub Actions workflow, triggered on every push to `main`.
+
+The next version is derived from **Conventional Commits**:
+
+| Commit prefix | Release |
+| --- | --- |
+| `fix:`, `perf:`, `refactor:` | patch |
+| `feat:` | minor |
+| `feat!:` / `BREAKING CHANGE:` | major |
+| `docs:`, `style:`, `chore:`, `test:`, `ci:`, `build:` | none |
+
+On a release, the workflow (see [`tools/semantic-release/prepare.js`](../../tools/semantic-release/prepare.js)):
+
+1. bumps `PLUGIN_SAMLSSO_VERSION` in `setup.php`;
+2. aligns the `@version` docstring of every PHP file (except `vendor/`);
+3. appends the new `<version>` block (with the correct `download_url`) to `samlsso.xml`;
+4. prepends a new entry to `changelog.md`, preserving the project's existing format;
+5. builds `release/samlsso.zip` (GLPI plugin layout: `samlsso/...`);
+6. commits the changes back to `main`, creates the `vX.Y.Z` git tag and the GitHub Release with the `samlsso.zip` asset.
+
+Local dry run (requires Node 24+):
+
+```bash
+npm ci
+npx semantic-release --dry-run
+```
+
+> The release job pushes back to `main` and creates releases, so `main` must not block the Actions
+> token (disable "require pull request" / allow `github-actions[bot]` to bypass, or keep the branch
+> unprotected). The build artifact `release/*.zip` is intentionally **not** tracked in git.
+
+### 3. Creating a Release (manual — legacy)
+
+The manual flow via `tools/mkzip.sh` is kept for local packaging:
+1. Update `PLUGIN_SAMLSSO_VERSION` in `setup.php`.
+2. Update `OLDVERSION`/`NEWVERSION` in `tools/mkzip.sh`.
+3. Run `./tools/mkzip.sh` (bumps PHP docstrings, runs the test suite, builds the zip).
+4. Manually update `samlsso.xml` with the new `<version>` block.
+5. Run `php tests/RunAllTests.php` and push.
 
 ---
 *For questions or architectural clarification, engage with the repository owner (DonutsNL) via the Discord link in the README.*

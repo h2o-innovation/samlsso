@@ -1,2 +1,8 @@
 .DS_Store
 docs/glpidocs/
+
+# semantic-release / Node tooling
+node_modules/
+
+# Release build artifacts (published as GitHub Release assets)
+/release/*.zip
