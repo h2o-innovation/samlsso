@@ -676,6 +676,87 @@
 
         return escaped;
     }
+
+    function samlssoCollectClaimMap() {
+        const rows = {};
+        document.querySelectorAll('#claim_mapping_tbody [name^="claim_map["]').forEach(function (el) {
+            if (el.disabled) {
+                return;
+            }
+            const match = el.name.match(/^claim_map\[(\d+)\]\[(.+)\]$/);
+            if (!match) {
+                return;
+            }
+            const index = match[1];
+            const key = match[2];
+            if (!rows[index]) {
+                rows[index] = {};
+            }
+            rows[index][key] = el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value;
+        });
+        return rows;
+    }
+
+    function samlssoTestMapping(apply) {
+        const sample = (document.getElementById('samlsso_test_sample') || {}).value || '';
+        const userLogin = (document.getElementById('samlsso_test_user') || {}).value || '';
+        const resultBox = document.getElementById('samlsso_test_result');
+        const rows = samlssoCollectClaimMap();
+
+        const params = new URLSearchParams();
+        params.append('_glpi_csrf_token', {{ csrf_token|json_encode|raw }});
+        params.append('sample', sample);
+        params.append('mode', apply ? 'apply' : 'preview');
+        params.append('user_login', userLogin);
+        Object.keys(rows).forEach(function (index) {
+            Object.keys(rows[index]).forEach(function (key) {
+                params.append('claim_map[' + index + '][' + key + ']', rows[index][key]);
+            });
+        });
+
+        if (resultBox) {
+            resultBox.innerHTML = '<div class="text-muted small"><i class="fas fa-spinner fa-spin"></i> ' + {{ __('Processing…', plugin)|json_encode|raw }} + '</div>';
+        }
+
+        fetch({{ glpi_rootdoc|json_encode|raw }} + '&action=test_mapping', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString()
+        })
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+            if (!resultBox) { return; }
+            if (!data || data.success === false) {
+                const msg = (data && data.error) ? data.error : {{ __('Unknown error', plugin)|json_encode|raw }};
+                resultBox.innerHTML = '<div class="alert alert-danger py-2 px-3 mb-0 small">' + msg + '</div>';
+                return;
+            }
+            if (data.applied) {
+                let html = '<div class="alert alert-success py-2 px-3 mb-0 small"><i class="fas fa-check me-1"></i>' + {{ __('User synchronized:', plugin)|json_encode|raw }} + ' <strong>' + (data.user || '') + '</strong><ul class="mb-0 mt-1">';
+                Object.keys(data.applied).forEach(function (field) {
+                    html += '<li>' + field + ' &rarr; <code>' + data.applied[field] + '</code></li>';
+                });
+                html += '</ul></div>';
+                resultBox.innerHTML = html;
+                return;
+            }
+            if (!data.results || data.results.length === 0) {
+                resultBox.innerHTML = '<div class="alert alert-info py-2 px-3 mb-0 small">' + {{ __('No regex transform is configured on any mapping row.', plugin)|json_encode|raw }} + '</div>';
+                return;
+            }
+            let html = '<table class="table table-sm table-bordered mb-0"><thead><tr><th>' + {{ __('GLPI Target Field', plugin)|json_encode|raw }} + '</th><th>' + {{ __('Regex Transform', plugin)|json_encode|raw }} + '</th><th>' + {{ __('Replace', plugin)|json_encode|raw }} + '</th><th>' + {{ __('Result', plugin)|json_encode|raw }} + '</th></tr></thead><tbody>';
+            data.results.forEach(function (row) {
+                html += '<tr><td>' + row.glpi_field + '</td><td><code>' + row.regex + '</code></td><td><code>' + row.replace + '</code></td><td><strong>' + row.result + '</strong></td></tr>';
+            });
+            html += '</tbody></table>';
+            resultBox.innerHTML = html;
+        })
+        .catch(function () {
+            if (resultBox) {
+                resultBox.innerHTML = '<div class="alert alert-danger py-2 px-3 mb-0 small">' + {{ __('Request failed.', plugin)|json_encode|raw }} + '</div>';
+            }
+        });
+    }
 </script>
 
 <form name="form" method="post" action="{{ glpi_rootdoc }}" id="phpsaml_config">

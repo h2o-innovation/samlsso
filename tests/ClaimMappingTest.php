@@ -901,6 +901,41 @@ XML;
 
             echo "✅ Invalid regex patterns are rejected by validation\n";
         }
+
+        /**
+         * Test that save() refuses to run (and reports) when the database table
+         * is missing the regex/replace columns, instead of silently dropping them.
+         *
+         * @throws \Exception If the guard does not trigger.
+         */
+        public function testSchemaGuardOnSave(): void
+        {
+            $original = $GLOBALS['DB'] ?? null;
+            $GLOBALS['DB'] = new class extends \GlpiPlugin\Samlsso\Tests\MockDB {
+                public function fieldExists(string $table, string $field, bool $cache = true): bool
+                {
+                    return false;
+                }
+            };
+
+            $entity = new ClaimMapEntity(1);
+            $success = $entity->save([
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_USERNAME, 'saml_claim' => 'uid'],
+                ['target_type' => ClaimMapItem::TARGET_TYPE_USER_FIELD, 'glpi_field' => ClaimMapItem::FIELD_EMAIL, 'saml_claim' => 'mail'],
+            ]);
+            $errors = $entity->getErrors();
+
+            $GLOBALS['DB'] = $original;
+
+            if ($success) {
+                throw new \Exception("save() should fail when the schema lacks the regex/replace columns.");
+            }
+            if (!isset($errors['schema_outdated'])) {
+                throw new \Exception("Expected a schema_outdated error to be recorded.");
+            }
+
+            echo "✅ Outdated claim mapping schema is detected on save\n";
+        }
     }
 }
 
@@ -913,6 +948,7 @@ namespace {
         $test->testCustomMapping();
         $test->testRegexTransformMapping();
         $test->testInvalidRegexRejected();
+        $test->testSchemaGuardOnSave();
         $test->testObservedClaimsTracking();
         $test->testXmlAnonymization();
         $test->testFallbackAndRequiredValidation();
