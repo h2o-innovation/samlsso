@@ -51,6 +51,35 @@
                         {% endif %}
                     </div>
                 </div>
+
+                <!-- Test & Synchronize: validate regex transforms with a sample value -->
+                <div class="mt-4 border-top pt-3">
+                    <h6 class="fw-bold mb-2 text-dark"><i class="fas fa-vial me-1"></i>{{ __('Test & Synchronize', plugin) }}</h6>
+                    <p class="text-muted mb-3" style="font-size: 0.85rem;">
+                        {{ __('Validate the Regex Transform with a sample value (for example an email address) before saving. Optionally apply the resolved fields to an existing GLPI user.', plugin) }}
+                    </p>
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-5">
+                            <label class="form-label mb-1 small fw-bold" for="samlsso_test_sample">{{ __('Sample value', plugin) }}</label>
+                            <input type="text" id="samlsso_test_sample" class="form-control form-control-sm" placeholder="joao.santos@h2oinnovation.com.br">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label mb-1 small fw-bold" for="samlsso_test_user">{{ __('GLPI user login (optional, to synchronize)', plugin) }}</label>
+                            <input type="text" id="samlsso_test_user" class="form-control form-control-sm" placeholder="joao.santos">
+                        </div>
+                        <div class="col-md-3">
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-sm btn-outline-primary w-100" onclick="samlssoTestMapping(false)">
+                                    <i class="fas fa-vial me-1"></i>{{ __('Test', plugin) }}
+                                </button>
+                                <button type="button" class="btn btn-sm btn-primary w-100" onclick="samlssoTestMapping(true)">
+                                    <i class="fas fa-sync me-1"></i>{{ __('Synchronize', plugin) }}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="samlsso_test_result" class="mt-3"></div>
+                </div>
             </div>
         </div>
 
