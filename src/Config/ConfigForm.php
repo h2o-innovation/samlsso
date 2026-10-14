@@ -528,18 +528,6 @@ HTML;
     {
         Session::checkRight('config', READ);
 
-        $payload = $request->request->all();
-
-        try {
-            if (method_exists(\Session::class, 'checkCSRF') && !\Session::checkCSRF($payload)) {
-                return new JsonResponse(['success' => false, 'error' => __('Invalid CSRF token.', PLUGIN_NAME)], 403);
-            }
-        } catch (\Throwable $e) {
-            if (empty($payload['_glpi_csrf_token'])) {
-                return new JsonResponse(['success' => false, 'error' => __('Invalid CSRF token.', PLUGIN_NAME)], 403);
-            }
-        }
-
         $sample = (string) $request->request->get('sample', '');
         $mode   = (string) $request->request->get('mode', 'preview');
         $rows   = $request->request->get('claim_map', []);
