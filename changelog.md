@@ -1,3 +1,6 @@
+**V1.5.3**
+- Fix: use isXmlHttpRequest() and surface synchronization errors
+
 **V1.5.2**
 - Fix: manual synchronization fails with AccessDenied (CSRF)
 
