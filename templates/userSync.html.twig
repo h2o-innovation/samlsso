@@ -75,10 +75,22 @@
             },
             body: params.toString()
         })
-        .then(function (response) { return response.json(); })
-        .then(function (data) {
+        .then(function (response) {
+            return response.text().then(function (text) {
+                let data = null;
+                try { data = JSON.parse(text); } catch (e) { data = null; }
+                return { status: response.status, data: data };
+            });
+        })
+        .then(function (res) {
             if (!resultBox) { return; }
-            const ok = !!(data && data.success);
+            if (!res.data) {
+                const tpl = {{ __('Request failed (HTTP %s). Check the GLPI logs.', plugin)|json_encode|raw }};
+                resultBox.innerHTML = '<div class="alert alert-danger py-2 px-3 mb-0 small">' + tpl.replace('%s', String(res.status)) + '</div>';
+                return;
+            }
+            const data = res.data;
+            const ok = !!data.success;
             const cls = ok ? 'alert-success' : 'alert-danger';
             const msg = (data && data.message) ? data.message : {{ __('Unknown error', plugin)|json_encode|raw }};
             resultBox.innerHTML = '<div class="alert ' + cls + ' py-2 px-3 mb-0 small">' + msg + '</div>';
