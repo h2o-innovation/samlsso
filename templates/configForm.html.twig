@@ -720,7 +720,11 @@
 
         fetch({{ glpi_rootdoc|json_encode|raw }} + '&action=test_mapping', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-Glpi-Csrf-Token': (document.querySelector('meta[property="glpi:csrf_token"]') || {}).content || '',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
             body: params.toString()
         })
         .then(function (response) { return response.json(); })

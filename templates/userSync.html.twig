@@ -38,7 +38,7 @@
                         {% for row in preview %}
                             <tr>
                                 <td>{{ row.column|title }}</td>
-                                <td class="text-muted">{{ row.current }}</td>
+                                <td class="text-muted" data-samlsso-current="{{ row.column }}">{{ row.current }}</td>
                                 <td><strong>{{ row.derived }}</strong></td>
                             </tr>
                         {% endfor %}
@@ -47,6 +47,7 @@
                 <button type="button" class="btn btn-primary" onclick="samlssoSyncUser()">
                     <i class="fas fa-arrows-rotate me-1"></i>{{ __('Synchronize now', plugin) }}
                 </button>
+                <div id="samlsso_sync_result" class="mt-3"></div>
             {% endif %}
         {% endif %}
     </div>
@@ -54,23 +55,47 @@
 
 <script>
     function samlssoSyncUser() {
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = {{ sync_url|json_encode|raw }};
+        const resultBox = document.getElementById('samlsso_sync_result');
+        const metaToken = document.querySelector('meta[property="glpi:csrf_token"]');
+        const token = metaToken ? metaToken.getAttribute('content') : '';
 
-        const csrf = document.createElement('input');
-        csrf.type = 'hidden';
-        csrf.name = '_glpi_csrf_token';
-        csrf.value = {{ csrf_token|json_encode|raw }};
+        const params = new URLSearchParams();
+        params.append('users_id', String({{ user_id }}));
 
-        const users = document.createElement('input');
-        users.type = 'hidden';
-        users.name = 'users_id';
-        users.value = {{ user_id }};
+        if (resultBox) {
+            resultBox.innerHTML = '<div class="text-muted small"><i class="fas fa-spinner fa-spin"></i> ' + {{ __('Processing…', plugin)|json_encode|raw }} + '</div>';
+        }
 
-        form.appendChild(csrf);
-        form.appendChild(users);
-        document.body.appendChild(form);
-        form.submit();
+        fetch({{ sync_url|json_encode|raw }}, {
+            method: 'POST',
+            headers: {
+                'X-Requested-With': 'XMLHttpRequest',
+                'X-Glpi-Csrf-Token': token,
+                'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: params.toString()
+        })
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+            if (!resultBox) { return; }
+            const ok = !!(data && data.success);
+            const cls = ok ? 'alert-success' : 'alert-danger';
+            const msg = (data && data.message) ? data.message : {{ __('Unknown error', plugin)|json_encode|raw }};
+            resultBox.innerHTML = '<div class="alert ' + cls + ' py-2 px-3 mb-0 small">' + msg + '</div>';
+
+            if (ok && data.applied) {
+                Object.keys(data.applied).forEach(function (column) {
+                    const cell = document.querySelector('[data-samlsso-current="' + column + '"]');
+                    if (cell) {
+                        cell.textContent = data.applied[column];
+                    }
+                });
+            }
+        })
+        .catch(function () {
+            if (resultBox) {
+                resultBox.innerHTML = '<div class="alert alert-danger py-2 px-3 mb-0 small">' + {{ __('Request failed.', plugin)|json_encode|raw }} + '</div>';
+            }
+        });
     }
 </script>
