@@ -35,7 +35,7 @@ declare(strict_types=1);
  * ------------------------------------------------------------------------
  *
  *  @package    samlSSO
- *  @version    1.5.0
+ *  @version    1.4.0
  *  @author     Chris Gralike
  *  @copyright  Copyright (c) 2024 by Chris Gralike
  *  @license    GPLv3+
@@ -52,6 +52,7 @@ use Session;
 use GlpiPlugin\Samlsso\Config\ClaimMapEntity;
 use GlpiPlugin\Samlsso\Config\ClaimMapItem;
 use Glpi\Application\View\TemplateRenderer;
+use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -152,14 +153,13 @@ class UserSync extends CommonGLPI
         $idpId  = self::resolveIdpId($email);
 
         $tplVars = [
-            'plugin'        => PLUGIN_NAME,
-            'user_id'       => $userId,
-            'user_name'     => (string) ($user->fields[ClaimMapItem::FIELD_USERNAME] ?? ''), //NOSONAR - 'name' column
-            'email'         => $email,
-            'idp_name'      => '',
-            'preview'       => [],
-            'sync_url'      => PLUGIN_SAMLSSO_WEBDIR . 'front/usersync',
-            'csrf_token'    => Session::getNewCSRFToken(),
+            'plugin'     => PLUGIN_NAME,
+            'user_id'    => $userId,
+            'user_name'  => (string) ($user->fields['name'] ?? ''),
+            'email'      => $email,
+            'idp_name'   => '',
+            'preview'    => [],
+            'sync_url'   => PLUGIN_SAMLSSO_WEBDIR . 'front/usersync',
         ];
 
         if ($idpId > 0) {
@@ -176,92 +176,132 @@ class UserSync extends CommonGLPI
     /**
      * Handle the manual synchronization request.
      *
-     * Verifies the CSRF token and the update rights, derives the mapped fields
-     * from the user's email address and applies them to the user.
+     * The CSRF token is validated (and preserved) by the GLPI kernel
+     * CheckCsrfListener before this method runs, so it must not be validated
+     * again here. The update rights are enforced, the mapped fields are derived
+     * from the user's email address and applied to the user.
      *
-     * @param Request $request Incoming request carrying users_id and CSRF token.
-     * @return Response Redirect back to the user form.
+     * @param Request $request Incoming request carrying users_id.
+     * @return Response JSON payload for AJAX callers, redirect otherwise.
      */
     public static function handleSync(Request $request): Response
     {
+        $isAjax = $request->isXmlAjaxRequest();
         $userId = (int) $request->request->get('users_id', 0);
 
-        $redirect = new RedirectResponse(
-            $userId > 0 ? \User::getFormURLWithID($userId) : PLUGIN_SAMLSSO_WEBDIR . 'front/config'
-        );
-
         if (!Session::haveRight('user', UPDATE)) {
-            Session::addMessageAfterRedirect(
-                __('You do not have permission to synchronize this user.', PLUGIN_NAME),
+            return self::respond(
+                $isAjax,
+                $userId,
                 false,
-                ERROR
+                __('You do not have permission to synchronize this user.', PLUGIN_NAME),
+                403
             );
-            return $redirect;
         }
 
         $user = new \User();
         if ($userId <= 0 || !$user->getFromDB($userId)) {
-            Session::addMessageAfterRedirect(
-                __('Unable to load the GLPI user for synchronization.', PLUGIN_NAME),
+            return self::respond(
+                $isAjax,
+                $userId,
                 false,
-                ERROR
+                __('Unable to load the GLPI user for synchronization.', PLUGIN_NAME)
             );
-            return $redirect;
         }
 
         if (!$user->canUpdate()) {
-            Session::addMessageAfterRedirect(
-                __('You do not have permission to update this user.', PLUGIN_NAME),
+            return self::respond(
+                $isAjax,
+                $userId,
                 false,
-                ERROR
+                __('You do not have permission to update this user.', PLUGIN_NAME),
+                403
             );
-            return $redirect;
         }
 
         $email = self::getUserEmail($userId);
         $idpId = self::resolveIdpId($email);
         if ($idpId <= 0) {
-            Session::addMessageAfterRedirect(
-                __('No samlSSO Identity Provider could be resolved for this user. Configure a matching email domain or a single active IdP.', PLUGIN_NAME),
+            return self::respond(
+                $isAjax,
+                $userId,
                 false,
-                ERROR
+                __('No samlSSO Identity Provider could be resolved for this user. Configure a matching email domain or a single active IdP.', PLUGIN_NAME)
             );
-            return $redirect;
         }
 
         $input = self::buildDerivedInput($user, $idpId, $email);
-        if (count($input) === 0) {
-            Session::addMessageAfterRedirect(
-                __('No claim mapping produced a value for this user. Verify the Regex Transforms in the IdP claim mapping.', PLUGIN_NAME),
+        if (count($input) <= 1) {
+            return self::respond(
+                $isAjax,
+                $userId,
                 false,
-                WARNING
-            );
-            return $redirect;
-        }
-
-        if ($user->update($input)) {
-            $updated = [];
-            foreach ($input as $column => $value) {
-                if ($column === 'id') {
-                    continue;
-                }
-                $updated[] = $column . ' = ' . $value;
-            }
-            Session::addMessageAfterRedirect(
-                sprintf(
-                    __('samlSSO synchronization applied: %s', PLUGIN_NAME),
-                    implode(', ', $updated)
-                )
-            );
-        } else {
-            Session::addMessageAfterRedirect(
-                __('samlSSO synchronization failed while updating the GLPI user.', PLUGIN_NAME),
-                false,
-                ERROR
+                __('No claim mapping produced a value for this user. Verify the Regex Transforms in the IdP claim mapping.', PLUGIN_NAME)
             );
         }
 
-        return $redirect;
+        if (!$user->update($input)) {
+            return self::respond(
+                $isAjax,
+                $userId,
+                false,
+                __('samlSSO synchronization failed while updating the GLPI user.', PLUGIN_NAME)
+            );
+        }
+
+        $applied = $input;
+        unset($applied['id']);
+
+        $parts = [];
+        foreach ($applied as $column => $value) {
+            $parts[] = $column . ' = ' . $value;
+        }
+
+        return self::respond(
+            $isAjax,
+            $userId,
+            true,
+            sprintf(__('samlSSO synchronization applied: %s', PLUGIN_NAME), implode(', ', $parts)),
+            200,
+            $applied
+        );
+    }
+
+    /**
+     * Build a synchronization response.
+     *
+     * AJAX callers receive a JSON payload so the tab can update in place.
+     * Non AJAX callers receive a redirect with a session message.
+     *
+     * @param bool   $isAjax  Whether the request is an XMLHttpRequest.
+     * @param int    $userId  The target GLPI user id.
+     * @param bool   $success Whether the operation succeeded.
+     * @param string $message Human readable result message.
+     * @param int    $status  HTTP status for error payloads.
+     * @param array  $applied Applied field values (AJAX success only).
+     * @return Response
+     */
+    private static function respond(
+        bool $isAjax,
+        int $userId,
+        bool $success,
+        string $message,
+        int $status = 200,
+        array $applied = []
+    ): Response {
+        if ($isAjax) {
+            return new JsonResponse([
+                'success' => $success,
+                'message' => $message,
+                'applied' => $applied,
+            ], $success ? 200 : $status);
+        }
+
+        Session::addMessageAfterRedirect($message, false, $success ? INFO : ERROR);
+
+        return new RedirectResponse(
+            $userId > 0 ? \User::getFormURLWithID($userId) : PLUGIN_SAMLSSO_WEBDIR . 'front/config'
+        );
     }
 
     /**
@@ -323,7 +363,7 @@ class UserSync extends CommonGLPI
      * @param \User  $user  The user being displayed.
      * @param int    $idpId The resolved IdP configuration id.
      * @param string $email The user email used as the transform source.
-     * @return array List of rows with glpi_field, current value and derived value.
+     * @return array List of rows with glpi_field, column, current and derived values.
      */
     private static function buildPreview(\User $user, int $idpId, string $email): array
     {
