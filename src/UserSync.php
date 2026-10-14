@@ -186,7 +186,7 @@ class UserSync extends CommonGLPI
      */
     public static function handleSync(Request $request): Response
     {
-        $isAjax = $request->isXmlAjaxRequest();
+        $isAjax = $request->isXmlHttpRequest();
         $userId = (int) $request->request->get('users_id', 0);
 
         if (!Session::haveRight('user', UPDATE)) {
