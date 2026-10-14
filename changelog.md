@@ -1,3 +1,6 @@
+**V1.5.1**
+- Fix: avoid double CSRF validation on manual synchronization
+
 **V1.5.0**
 - Feature: manual samlSSO synchronization on the User form
 

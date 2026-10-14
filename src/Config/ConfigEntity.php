@@ -34,7 +34,7 @@ declare(strict_types=1);
  * ------------------------------------------------------------------------
  *
  *  @package    samlSSO
- *  @version    1.5.0
+ *  @version    1.5.1
  *  @author     Chris Gralike
  *  @copyright  Copyright (c) 2024 by Chris Gralike
  *  @license    GPLv3+
