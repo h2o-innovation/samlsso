@@ -56,11 +56,11 @@
 <script>
     function samlssoSyncUser() {
         const resultBox = document.getElementById('samlsso_sync_result');
-        const metaToken = document.querySelector('meta[property="glpi:csrf_token"]');
-        const token = metaToken ? metaToken.getAttribute('content') : '';
+        const token = {{ csrf_token|json_encode|raw }};
 
         const params = new URLSearchParams();
         params.append('users_id', String({{ user_id }}));
+        params.append('_glpi_csrf_token', token);
 
         if (resultBox) {
             resultBox.innerHTML = '<div class="text-muted small"><i class="fas fa-spinner fa-spin"></i> ' + {{ __('Processing…', plugin)|json_encode|raw }} + '</div>';

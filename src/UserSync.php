@@ -53,7 +53,6 @@ use GlpiPlugin\Samlsso\Config\ClaimMapEntity;
 use GlpiPlugin\Samlsso\Config\ClaimMapItem;
 use Glpi\Application\View\TemplateRenderer;
 use Symfony\Component\HttpFoundation\JsonResponse;
-use Symfony\Component\HttpFoundation\RedirectResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -160,6 +159,7 @@ class UserSync extends CommonGLPI
             'idp_name'   => '',
             'preview'    => [],
             'sync_url'   => PLUGIN_SAMLSSO_WEBDIR . 'front/usersync',
+            'csrf_token' => Session::getNewCSRFToken(),
         ];
 
         if ($idpId > 0) {
@@ -182,17 +182,14 @@ class UserSync extends CommonGLPI
      * from the user's email address and applied to the user.
      *
      * @param Request $request Incoming request carrying users_id.
-     * @return Response JSON payload for AJAX callers, redirect otherwise.
+     * @return Response JSON payload describing the synchronization result.
      */
     public static function handleSync(Request $request): Response
     {
-        $isAjax = $request->isXmlHttpRequest();
         $userId = (int) $request->request->get('users_id', 0);
 
         if (!Session::haveRight('user', UPDATE)) {
             return self::respond(
-                $isAjax,
-                $userId,
                 false,
                 __('You do not have permission to synchronize this user.', PLUGIN_NAME),
                 403
@@ -202,8 +199,6 @@ class UserSync extends CommonGLPI
         $user = new \User();
         if ($userId <= 0 || !$user->getFromDB($userId)) {
             return self::respond(
-                $isAjax,
-                $userId,
                 false,
                 __('Unable to load the GLPI user for synchronization.', PLUGIN_NAME)
             );
@@ -211,8 +206,6 @@ class UserSync extends CommonGLPI
 
         if (!$user->canUpdate()) {
             return self::respond(
-                $isAjax,
-                $userId,
                 false,
                 __('You do not have permission to update this user.', PLUGIN_NAME),
                 403
@@ -223,8 +216,6 @@ class UserSync extends CommonGLPI
         $idpId = self::resolveIdpId($email);
         if ($idpId <= 0) {
             return self::respond(
-                $isAjax,
-                $userId,
                 false,
                 __('No samlSSO Identity Provider could be resolved for this user. Configure a matching email domain or a single active IdP.', PLUGIN_NAME)
             );
@@ -233,8 +224,6 @@ class UserSync extends CommonGLPI
         $input = self::buildDerivedInput($user, $idpId, $email);
         if (count($input) <= 1) {
             return self::respond(
-                $isAjax,
-                $userId,
                 false,
                 __('No claim mapping produced a value for this user. Verify the Regex Transforms in the IdP claim mapping.', PLUGIN_NAME)
             );
@@ -242,8 +231,6 @@ class UserSync extends CommonGLPI
 
         if (!$user->update($input)) {
             return self::respond(
-                $isAjax,
-                $userId,
                 false,
                 __('samlSSO synchronization failed while updating the GLPI user.', PLUGIN_NAME)
             );
@@ -258,8 +245,6 @@ class UserSync extends CommonGLPI
         }
 
         return self::respond(
-            $isAjax,
-            $userId,
             true,
             sprintf(__('samlSSO synchronization applied: %s', PLUGIN_NAME), implode(', ', $parts)),
             200,
@@ -270,38 +255,26 @@ class UserSync extends CommonGLPI
     /**
      * Build a synchronization response.
      *
-     * AJAX callers receive a JSON payload so the tab can update in place.
-     * Non AJAX callers receive a redirect with a session message.
+     * Always returns a JSON payload so the tab can render the outcome in place,
+     * regardless of how the request is classified by the CSRF listener.
      *
-     * @param bool   $isAjax  Whether the request is an XMLHttpRequest.
-     * @param int    $userId  The target GLPI user id.
      * @param bool   $success Whether the operation succeeded.
      * @param string $message Human readable result message.
      * @param int    $status  HTTP status for error payloads.
-     * @param array  $applied Applied field values (AJAX success only).
-     * @return Response
+     * @param array  $applied Applied field values (success only).
+     * @return JsonResponse
      */
     private static function respond(
-        bool $isAjax,
-        int $userId,
         bool $success,
         string $message,
         int $status = 200,
         array $applied = []
-    ): Response {
-        if ($isAjax) {
-            return new JsonResponse([
-                'success' => $success,
-                'message' => $message,
-                'applied' => $applied,
-            ], $success ? 200 : $status);
-        }
-
-        Session::addMessageAfterRedirect($message, false, $success ? INFO : ERROR);
-
-        return new RedirectResponse(
-            $userId > 0 ? \User::getFormURLWithID($userId) : PLUGIN_SAMLSSO_WEBDIR . 'front/config'
-        );
+    ): JsonResponse {
+        return new JsonResponse([
+            'success' => $success,
+            'message' => $message,
+            'applied' => $applied,
+        ], $success ? 200 : $status);
     }
 
     /**
