@@ -1,3 +1,6 @@
+**V1.5.2**
+- Fix: manual synchronization fails with AccessDenied (CSRF)
+
 **V1.5.1**
 - Fix: avoid double CSRF validation on manual synchronization
 
