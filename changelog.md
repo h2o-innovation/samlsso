@@ -1,3 +1,6 @@
+**V1.5.4**
+- Fix: send CSRF token in body and always return JSON on sync
+
 **V1.5.3**
 - Fix: use isXmlHttpRequest() and surface synchronization errors
 
