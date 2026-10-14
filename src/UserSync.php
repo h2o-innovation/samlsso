@@ -190,10 +190,6 @@ class UserSync extends CommonGLPI
             $userId > 0 ? \User::getFormURLWithID($userId) : PLUGIN_SAMLSSO_WEBDIR . 'front/config'
         );
 
-        if (!Session::checkCSRF($request->request->all())) {
-            return $redirect;
-        }
-
         if (!Session::haveRight('user', UPDATE)) {
             Session::addMessageAfterRedirect(
                 __('You do not have permission to synchronize this user.', PLUGIN_NAME),
